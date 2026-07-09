@@ -1,0 +1,13 @@
+name: author_collaboration
+display_name: 作者协作黑名单
+desc: QQ作者群黑名单管理(基于AstrBot + OneBot v11)
+help: |
+  在私聊或群里 @机器人 后可用:
+    /查询黑名单            - 列出当前风险人员
+    /加入ACT作者互助会      - 回复作者互助会群号
+    /寻求帮助               - 安慰 + 互助会群号
+
+  机器人被设为群管理员时,黑名单成员进群会自动踢出;
+  没有管理权限时会改为 @ 警告一次。
+version: 1.0.0
+author: ifan

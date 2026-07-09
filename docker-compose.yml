@@ -1,0 +1,64 @@
+# Author Collaboration Tool - AstrBot + napcat 部署
+#
+# 用法:
+#   1. cp .env.example .env,填入 ONEBOT_ACCESS_TOKEN(自定义一个随机串)
+#      (已经自动生成了 .env,token 已写入)
+#   2. docker compose up -d
+#   3. 访问 http://<host>:6185 进入 AstrBot WebUI,设置初始管理员账号
+#   4. 访问 http://<host>:6099 进入 napcat WebUI,扫码登录 bot QQ
+#   5. 在 napcat WebUI 配置 reverse_ws URL: ws://astrbot:6196,token 与 .env 一致
+#   6. 在 AstrBot WebUI 添加 aiocqhttp 平台,端口 6196,token 与 .env 一致
+#   7. 重启 napcat,等 AstrBot 日志里出现"已加载插件 author_collaboration"
+#
+# 端口说明:
+#   6185  - AstrBot WebUI
+#   6196  - AstrBot 反向 WebSocket (napcat 会连过来)
+#   6099  - napcat WebUI
+#
+# 挂载说明(关键):
+#   astrbot 服务只挂 ./AstrBot/data → /AstrBot/data,
+#   这样:
+#     - 主程序代码来自 soulter/astrbot:v4.23.5 镜像(已锁定版本)
+#     - 本地 ./AstrBot/data/plugins/author_collaboration/ 是我们的插件
+#     - AstrBot 首次启动会自动生成 ./AstrBot/data/config/ 等运行时配置
+#
+#   napcat 容器用 ./napcat-config + ./napcat-logs 持久化。
+
+services:
+  astrbot:
+    image: soulter/astrbot:v4.23.5
+    container_name: astrbot
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "6185:6185"   # AstrBot WebUI
+      - "6196:6196"   # OneBot v11 反向 WebSocket(napcat 连过来)
+    environment:
+      - TZ=Asia/Shanghai
+    env_file:
+      - .env
+    volumes:
+      - ./AstrBot/data:/AstrBot/data
+    networks:
+      - acbot-net
+    depends_on:
+      - napcat
+
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: unless-stopped
+    ports:
+      - "6099:6099"   # napcat WebUI
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./napcat-config:/app/napcat/config
+      - ./napcat-logs:/app/napcat/logs
+    networks:
+      - acbot-net
+
+networks:
+  acbot-net:
+    driver: bridge

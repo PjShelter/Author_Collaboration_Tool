@@ -1,0 +1,36 @@
+admins:
+- group_id: 0
+  user_id: 0
+  note: 主测试管理员
+trusted_groups:
+- group_id: 0
+  name: 测试作者群
+profiles:
+- person_id: risk_20260709_itada_shiori
+  display_name: 井田诗织
+  qq_number: '1744916568'
+  aliases:
+  - 井田诗织
+  - B站同名
+  risk_level: high
+  reason: '管理员记录: 造谣并暗示画师涉嫌 bp; 造谣 webgal 相关二创作者和新春会包庇 bp。'
+  evidence:
+  - 2026-07-09 管理员录入
+  mapped_members:
+  - group_id: -1
+    user_id: 1744916568
+    note: QQ 号全群匹配
+- person_id: risk_20260709_knighv
+  display_name: knighV
+  qq_number: '1559641017'
+  aliases:
+  - knighV
+  - 贴吧同名
+  risk_level: high
+  reason: '管理员记录: 造谣新春会; 撕咬无关爱素作者 lyy; 造谣 lyy 画师 bp; 造谣他人开盒、bp 等。'
+  evidence:
+  - 2026-07-09 管理员录入
+  mapped_members:
+  - group_id: -1
+    user_id: 1559641017
+    note: QQ 号全群匹配
