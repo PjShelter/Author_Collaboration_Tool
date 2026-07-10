@@ -257,12 +257,14 @@ class AuthorCollaborationPlugin(star.Star):
     def _parse_paged_query(self, text: str) -> tuple[str, int]:
         query = text.strip()
         page = 1
+        # Note: do NOT include `^(\d+)$` here — bare digits like "947" are
+        # legitimate card IDs / model names, not page numbers. Page number
+        # is only a TRAILING number with whitespace before it.
         patterns = (
             r"\s+p(?:age)?\s*(\d+)$",
             r"\s+第\s*(\d+)\s*页$",
             r"\s+(\d+)\s*页$",
             r"\s+(\d+)$",
-            r"^(\d+)$",
         )
         for pattern in patterns:
             match = re.search(pattern, query, flags=re.IGNORECASE)
@@ -1080,7 +1082,15 @@ class AuthorCollaborationPlugin(star.Star):
             event,
             {COMMAND_MEME_LIST, *COMMAND_MEME_LIST_ALIASES},
         )
-        _, page = self._parse_paged_query(raw or "1")
+        # /memes itself never carries a query, only an optional page number
+        # (e.g. "/memes 2" or "/memes 第3页"). Use a strict parse so that
+        # non-numeric junk in the arg doesn't accidentally match.
+        page = 1
+        if raw:
+            stripped = raw.strip()
+            page_match = re.fullmatch(r"\d+", stripped)
+            if page_match:
+                page = max(1, int(stripped))
         try:
             all_kws = await self.meme.list_keywords()
         except Exception as e:
