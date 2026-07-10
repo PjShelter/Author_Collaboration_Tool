@@ -40,5 +40,15 @@
     "description": "每个群每天通过 Live2D 下载指令可消耗的最大资源量;默认 100MB",
     "type": "int",
     "default": 104857600
+  },
+  "meme_enabled": {
+    "description": "是否启用自然语言 meme 表情触发",
+    "type": "bool",
+    "default": true
+  },
+  "meme_api_base": {
+    "description": "meme-generator FastAPI 地址;Docker Compose 内使用 http://meme-generator:2233",
+    "type": "string",
+    "default": "http://meme-generator:2233"
   }
 }

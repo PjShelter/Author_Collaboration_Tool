@@ -30,11 +30,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.event.filter import CustomFilter
+from astrbot.api.event.filter import CustomFilter, on_astrbot_loaded
 from astrbot.api.message_components import At, File, Image, Plain
 from astrbot.core import file_token_service
 
-from .lib import blacklist, db, live2d_api, notify, risk_profiles
+from .lib import blacklist, db, live2d_api, meme_api, notify, risk_profiles
 from .lib.config_helper import merge_config, resolve_bot_db_path, resolve_risk_profiles_path
 
 
@@ -54,6 +54,10 @@ COMMAND_CHIBI_DOWNLOAD = "小人下载"
 COMMAND_CHIBI_DOWNLOAD_ALIASES = {"下载小人", "小人", "5"}
 COMMAND_LIVE2D_DOWNLOAD = "live2d下载"
 COMMAND_LIVE2D_DOWNLOAD_ALIASES = {"Live2D下载", "模型下载", "下载live2d", "6"}
+COMMAND_MEME_HELP = "meme功能"
+COMMAND_MEME_HELP_ALIASES = {"表情包", "meme", "7"}
+COMMAND_MEME_LIST = "memes"
+COMMAND_MEME_LIST_ALIASES = {"表情列表", "模板列表", "memelist"}
 COMMAND_MENU = "帮助"
 COMMAND_MENU_ALIASES = {"菜单", "指令", "指令列表", "help", "0"}
 
@@ -68,6 +72,10 @@ KNOWN_COMMANDS = {
     *COMMAND_CARD_QUERY_ALIASES,
     COMMAND_LIVE2D_DOWNLOAD,
     *COMMAND_LIVE2D_DOWNLOAD_ALIASES,
+    COMMAND_MEME_HELP,
+    *COMMAND_MEME_HELP_ALIASES,
+    COMMAND_MEME_LIST,
+    *COMMAND_MEME_LIST_ALIASES,
     COMMAND_MENU,
     *COMMAND_MENU_ALIASES,
 }
@@ -82,7 +90,23 @@ LIVE2D_COMMANDS = {
 DEFAULT_DAILY_DOWNLOAD_LIMIT_BYTES = 100 * 1024 * 1024
 CARD_QUERY_PAGE_SIZE = 5
 LIVE2D_MODEL_PAGE_SIZE = 5
+MEME_LIST_PAGE_SIZE = 30
 INTERNAL_FILE_BASE_URL = "http://astrbot:6185/api/file"
+
+DEFAULT_MEME_ALIASES: dict[str, str] = {
+    "狗耳帽": "dog_ear_hat",
+    "狗帽": "dog_ear_hat",
+    "摸摸": "petpet",
+    "摸头": "petpet",
+    "猫舔": "cat_lick",
+    "猫猫舔": "cat_lick",
+    "猫抓": "cat_scratch",
+    "猫猫抓": "cat_scratch",
+    "捶你": "chuini",
+    "doro点赞": "doro_thumbs_up",
+    "Doro点赞": "doro_thumbs_up",
+    "桃乐丝点赞": "doro_thumbs_up",
+}
 
 
 class GroupIncreaseFilter(CustomFilter):
@@ -139,6 +163,11 @@ class AuthorCollaborationPlugin(star.Star):
             or DEFAULT_DAILY_DOWNLOAD_LIMIT_BYTES
         )
         self.live2d = live2d_api.ShelterLive2DClient()
+        self.meme_enabled = bool(self.cfg.get("meme_enabled", True))
+        self.meme = meme_api.MemeGeneratorClient(
+            str(self.cfg.get("meme_api_base") or meme_api.DEFAULT_BASE_URL)
+        )
+        self.meme_aliases = dict(DEFAULT_MEME_ALIASES)
 
         self.scheduler = AsyncIOScheduler()
         try:
@@ -177,8 +206,32 @@ class AuthorCollaborationPlugin(star.Star):
             "/3 或 /寻求帮助 - 获取求助提示",
             "/4 或 /卡面查询 关键词 - 查询卡面和图片链接",
             "/6 或 /live2d下载 关键词 - 查询/下载 Live2D 压缩包",
+            "/7 或 /meme功能 - 查看 meme 表情触发说明",
+            "/memes 或 /表情列表 - 查看可用 meme 关键词表",
             "/0 或 /帮助 - 显示本指令列表",
         )
+
+    def _meme_help_text(self) -> str:
+        aliases = "、".join(sorted(self.meme_aliases.keys()))
+        return notify.join_lines(
+            "meme 表情功能:",
+            "直接发送关键词即可触发,不需要 / 开头。",
+            "示例: 狗耳帽@某人 / 狗耳帽 自己 / 摸摸@某人",
+            "没有 @ 或图片时,默认使用发送者头像。",
+            f"当前常用关键词: {aliases}",
+            "查看全部关键词表: /memes 或 /表情列表",
+        )
+
+    def _meme_aliases(self) -> dict[str, str]:
+        """Merged alias dict for trigger matching.
+
+        Starts from the hardcoded DEFAULT_MEME_ALIASES (always available, even
+        if meme-generator is down) and overlays the dynamic cache populated by
+        meme_api.MemeGeneratorClient.find_by_keyword. Dynamic wins on collision.
+        """
+        merged: dict[str, str] = dict(DEFAULT_MEME_ALIASES)
+        merged.update(self.meme._keyword_index)
+        return merged
 
     def _looks_like_known_command(self, text: str) -> bool:
         normalized = text.strip()
@@ -209,6 +262,7 @@ class AuthorCollaborationPlugin(star.Star):
             r"\s+第\s*(\d+)\s*页$",
             r"\s+(\d+)\s*页$",
             r"\s+(\d+)$",
+            r"^(\d+)$",
         )
         for pattern in patterns:
             match = re.search(pattern, query, flags=re.IGNORECASE)
@@ -384,6 +438,148 @@ class AuthorCollaborationPlugin(star.Star):
             isinstance(message, At) and str(message.qq) == self_id
             for message in event.get_messages()
         )
+
+    def _parse_meme_trigger(self, event: AstrMessageEvent) -> tuple[str, str, str] | None:
+        text = event.get_message_str().strip()
+        if not text or text.startswith("/"):
+            return None
+        for alias, key in sorted(self._meme_aliases().items(), key=lambda item: len(item[0]), reverse=True):
+            if text == alias:
+                return key, alias, ""
+            if text.startswith(alias):
+                rest = text[len(alias) :].strip()
+                rest = re.sub(r"^@[^()\s]+(?:\(\d+\))?\s*", "", rest).strip()
+                return key, alias, rest
+        return None
+
+    async def _parse_meme_trigger_lazy(
+        self,
+        event: AstrMessageEvent,
+    ) -> tuple[str, str, str] | None:
+        trigger = self._parse_meme_trigger(event)
+        if trigger is not None:
+            return trigger
+        if self.meme._keyword_index:
+            return None
+        try:
+            await self.meme.list_keywords()
+        except Exception as e:
+            _log.warning(f"meme 关键词懒加载失败: {e}")
+            return None
+        return self._parse_meme_trigger(event)
+
+    def _meme_image_sources(self, event: AstrMessageEvent, max_images: int | None = None) -> list[str]:
+        self_id = str(event.get_self_id())
+        urls: list[str] = []
+        for message in event.get_messages():
+            if isinstance(message, At):
+                if str(message.qq) not in {self_id, "all"}:
+                    urls.append(meme_api.avatar_url(message.qq))
+            elif isinstance(message, Image):
+                url = message.url or message.file or ""
+                if url.startswith("http://") or url.startswith("https://"):
+                    urls.append(url)
+        if max_images is not None and max_images <= 0:
+            return []
+        if not urls:
+            urls = [meme_api.avatar_url(event.get_sender_id())]
+        if max_images is not None:
+            return urls[:max_images]
+        return urls
+
+    def _meme_keyword_table_path(self) -> Path:
+        return self.db_path.parent / "meme_keyword_table.png"
+
+    def _meme_param_limits(self, info: dict) -> tuple[int, int, int, int, list[str]]:
+        params = info.get("params_type") or {}
+        min_images = int(params.get("min_images") or 0)
+        max_images = int(params.get("max_images") if params.get("max_images") is not None else min_images)
+        min_texts = int(params.get("min_texts") or 0)
+        max_texts = int(params.get("max_texts") if params.get("max_texts") is not None else min_texts)
+        default_texts = [str(text) for text in (params.get("default_texts") or [])]
+        return min_images, max_images, min_texts, max_texts, default_texts
+
+    def _split_meme_texts(self, rest: str, max_texts: int) -> list[str]:
+        rest = rest.strip()
+        if not rest:
+            return []
+        if max_texts <= 1:
+            return [rest]
+        if any(sep in rest for sep in ("|", "｜", "\n")):
+            return [
+                item.strip()
+                for item in re.split(r"\s*[|｜\n]\s*", rest)
+                if item.strip()
+            ]
+        return [rest]
+
+    def _meme_text_args(
+        self,
+        rest: str,
+        min_texts: int,
+        max_texts: int,
+        default_texts: list[str],
+    ) -> list[str]:
+        texts = self._split_meme_texts(rest, max_texts)
+        if not texts and default_texts:
+            texts = default_texts[:max_texts]
+        if len(texts) == 1 and min_texts > 1 and default_texts:
+            filled = default_texts[:max_texts]
+            value = texts[0]
+            replaced = False
+            for idx, default in enumerate(filled):
+                if "xxx" in default:
+                    filled[idx] = default.replace("xxx", value)
+                    replaced = True
+                    break
+            if not replaced:
+                filled[min(len(filled), max_texts) - 1] = value
+            texts = filled
+        if len(texts) < min_texts and default_texts:
+            for default in default_texts[len(texts):max_texts]:
+                texts.append(default)
+                if len(texts) >= min_texts:
+                    break
+        if max_texts >= 0:
+            texts = texts[:max_texts]
+        return texts
+
+    def _meme_usage_hint(
+        self,
+        alias: str,
+        min_images: int,
+        max_images: int,
+        min_texts: int,
+        max_texts: int,
+    ) -> str:
+        if max_images == 0 and min_texts > 0:
+            return f"用法: {alias} 要写入的文字"
+        if min_images > 0 and max_texts == 0:
+            return f"用法: {alias}@某人 或 {alias} + 图片"
+        if min_images > 0 and min_texts > 0:
+            return f"用法: {alias}@某人 文字"
+        return f"用法: 直接发送 {alias}"
+
+    async def _prepare_meme_payload(
+        self,
+        event: AstrMessageEvent,
+        key: str,
+        alias: str,
+        rest: str,
+    ) -> tuple[list[str], list[str], str | None]:
+        info = await self.meme.template_info(key)
+        if info is None:
+            info = {"key": key, "params_type": {"min_images": 1, "max_images": 1, "min_texts": 0, "max_texts": 0}}
+        min_images, max_images, min_texts, max_texts, default_texts = self._meme_param_limits(info)
+
+        image_urls = self._meme_image_sources(event, max_images)
+        if len(image_urls) < min_images:
+            return [], [], self._meme_usage_hint(alias, min_images, max_images, min_texts, max_texts)
+
+        texts = self._meme_text_args(rest, min_texts, max_texts, default_texts)
+        if len(texts) < min_texts:
+            return [], [], self._meme_usage_hint(alias, min_images, max_images, min_texts, max_texts)
+        return image_urls, texts, None
 
     async def _send_welcome(self, event: AstrMessageEvent, user_id: int) -> None:
         try:
@@ -868,17 +1064,123 @@ class AuthorCollaborationPlugin(star.Star):
             f"{message}"
         ).stop_event()
 
+    @filter.command(COMMAND_MEME_HELP, alias=COMMAND_MEME_HELP_ALIASES)
+    async def cmd_meme_help(self, event: AstrMessageEvent):
+        yield event.plain_result(self._meme_help_text()).stop_event()
+
+    @filter.command(COMMAND_MEME_LIST, alias=COMMAND_MEME_LIST_ALIASES)
+    async def cmd_meme_list(self, event: AstrMessageEvent):
+        """Paged listing of all meme keywords known to meme-generator."""
+        table_path = self._meme_keyword_table_path()
+        if table_path.exists():
+            yield event.chain_result([Image.fromFileSystem(str(table_path))]).stop_event()
+            return
+
+        raw = self._command_args(
+            event,
+            {COMMAND_MEME_LIST, *COMMAND_MEME_LIST_ALIASES},
+        )
+        _, page = self._parse_paged_query(raw or "1")
+        try:
+            all_kws = await self.meme.list_keywords()
+        except Exception as e:
+            _log.warning(f"meme 列表失败: err={e}")
+            yield event.plain_result(
+                f"表情服务暂不可用,请确认 meme-generator 已启动。\n{e}"
+            ).stop_event()
+            return
+
+        total = len(all_kws)
+        if total == 0:
+            yield event.plain_result(
+                "表情服务暂不可用(关键词为空),首次调用可能需要 10-20 秒拉取缓存。"
+            ).stop_event()
+            return
+
+        total_pages = max(1, (total + MEME_LIST_PAGE_SIZE - 1) // MEME_LIST_PAGE_SIZE)
+        if page > total_pages:
+            yield event.plain_result(
+                f"表情列表: 只有 {total_pages} 页,共 {total} 个关键词。"
+            ).stop_event()
+            return
+
+        start = (page - 1) * MEME_LIST_PAGE_SIZE
+        page_kws = all_kws[start : start + MEME_LIST_PAGE_SIZE]
+        flat = [alias for alias, _ in page_kws]
+
+        lines = [f"可用表情关键词(第 {page}/{total_pages} 页,共 {total} 个):"]
+        for i in range(0, len(flat), 6):
+            lines.append("、".join(flat[i : i + 6]))
+        lines.append("用法: 直接发送 关键词,或 关键词@某人 / 关键词 自己")
+        if page > 1:
+            lines.append(f"上一页: /memes {page - 1}")
+        if page < total_pages:
+            lines.append(f"下一页: /memes {page + 1}")
+
+        yield event.plain_result(
+            notify.trim_message("\n".join(lines), self.max_text_len)
+        ).stop_event()
+
+    @on_astrbot_loaded()
+    async def warm_meme_cache(self):
+        """Pre-load meme-generator's template listing in the background so the
+        first bare-keyword invocation has 0 latency. Runs once after AstrBot
+        finishes loading.
+        """
+        try:
+            ok = await self.meme.warm_cache()
+            if ok:
+                _log.info(
+                    f"meme 缓存预热完成: {len(self.meme._templates)} 个模板, "
+                    f"{len(self.meme._keyword_index)} 个关键词别名"
+                )
+        except Exception as e:
+            _log.warning(f"meme 缓存预热失败(非致命): {e}")
+
     @filter.command(COMMAND_MENU, alias=COMMAND_MENU_ALIASES)
     async def cmd_menu(self, event: AstrMessageEvent):
         yield event.plain_result(self._command_menu_text()).stop_event()
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
+    async def generate_meme_from_plain_trigger(self, event: AstrMessageEvent):
+        if not self.meme_enabled:
+            return
+        trigger = await self._parse_meme_trigger_lazy(event)
+        if trigger is None:
+            return
+        key, alias, rest = trigger
+
+        try:
+            image_urls, texts, usage_error = await self._prepare_meme_payload(
+                event,
+                key,
+                alias,
+                rest,
+            )
+            if usage_error:
+                yield event.plain_result(usage_error).stop_event()
+                return
+            result = await self.meme.generate(
+                key,
+                image_urls,
+                texts=texts,
+            )
+        except Exception as e:
+            _log.warning(f"meme 生成失败: key={key} alias={alias} err={e}")
+            yield event.plain_result(
+                f"meme 生成失败: {alias}\n"
+                f"{e}"
+            ).stop_event()
+            return
+
+        yield event.chain_result([Image.fromBytes(result.content)]).stop_event()
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 1)
     async def show_menu_on_private_or_mention(self, event: AstrMessageEvent):
         """私聊或群里 @ 机器人但未输入已知指令时,展示指令列表。"""
-        if not event.is_at_or_wake_command:
-            return
-        if not event.is_private_chat() and not self._mentions_self(event):
+        if not (event.is_private_chat() or self._mentions_self(event)):
             return
         if self._looks_like_known_command(event.get_message_str()):
             return

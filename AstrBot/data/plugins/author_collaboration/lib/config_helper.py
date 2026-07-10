@@ -40,6 +40,8 @@ _DEFAULTS: dict[str, Any] = {
     "bot_db_path": "data/bot.db",
     "act_group_number": "621930922",
     "max_text_len": 1800,
+    "meme_api_base": "http://meme-generator:2233",
+    "meme_enabled": True,
 }
 
 

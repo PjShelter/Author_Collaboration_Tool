@@ -17,6 +17,14 @@ napcat-qrcode.png
 # napcat-config/ contains passkey.json and per-account bot state.
 napcat-config/
 napcat-logs/
+napcat-data/
+
+# =============================================================================
+# meme-generator templates — fetched by scripts/setup_meme_emoji.sh
+# =============================================================================
+# meme-data/README.md is committed (usage pointer). The 473 MB of meme_emoji
+# templates lives under meme-data/memes/ and is regenerated on demand.
+meme-data/memes/
 
 # =============================================================================
 # Vendored AstrBot upstream source (~62 MB)
@@ -53,6 +61,9 @@ AstrBot/data/plugins/author_collaboration/data/*.db-wal
 AstrBot/data/plugins/author_collaboration/data/*.db-shm
 AstrBot/data/plugins/author_collaboration/data/*.yaml.bak
 AstrBot/data/plugins/author_collaboration/data/live2d_packages/
+
+# meme-generator templates are installed locally by scripts/setup_meme_emoji.sh.
+meme-data/memes/
 
 # =============================================================================
 # Python
