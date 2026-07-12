@@ -450,16 +450,39 @@ class AuthorCollaborationPlugin(star.Star):
         )
 
     def _parse_meme_trigger(self, event: AstrMessageEvent) -> tuple[str, str, str] | None:
+        """Detect intentional meme commands.
+
+        Only fires when the message IS a meme command, not when the alias
+        happens to appear as a substring of a longer sentence.
+
+        Triggers:
+          - text == alias                     (bare keyword, e.g. "摸摸")
+          - alias + @mention                  (e.g. "摸摸 @张三")
+          - alias + attached image            (e.g. "摸摸" + [图片])
+
+        Skipped (returns None) otherwise, so "幻影坦克还是太弱势了" or
+        "666哈哈" do not generate memes.
+        """
         text = event.get_message_str().strip()
         if not text or text.startswith("/"):
             return None
+        # Has an attached image anywhere in the message?
+        has_image = any(isinstance(m, Image) for m in event.get_messages())
         for alias, key in sorted(self._meme_aliases().items(), key=lambda item: len(item[0]), reverse=True):
             if text == alias:
                 return key, alias, ""
             if text.startswith(alias):
                 rest = text[len(alias) :].strip()
-                rest = re.sub(r"^@[^()\s]+(?:\(\d+\))?\s*", "", rest).strip()
-                return key, alias, rest
+                rest_after_at = re.sub(r"^@[^()\s]+(?:\(\d+\))?\s*", "", rest).strip()
+                # If nothing meaningful follows the alias, fire.
+                if not rest_after_at:
+                    return key, alias, rest_after_at
+                # If the user attached an image along with the alias, fire
+                # (image gets picked up later by _meme_image_sources).
+                if has_image:
+                    return key, alias, rest_after_at
+                # Otherwise it's prose, not a meme command — skip.
+                return None
         return None
 
     async def _parse_meme_trigger_lazy(
