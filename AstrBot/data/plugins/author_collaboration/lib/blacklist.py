@@ -31,10 +31,10 @@ def format_blacklist(path: Path, limit: int = 10) -> str:
         reason = str(profile.get("reason") or "暂无公开原因")
         if aliases:
             lines.append(
-                f"- {name} / QQ: {qq_number} / 曾用名: {aliases}\n  原因: {reason}"
+                f"- {name} / 曾用名: {aliases}\n  原因: {reason}"
             )
         else:
-            lines.append(f"- {name} / QQ: {qq_number}\n  原因: {reason}")
+            lines.append(f"- {name}\n  原因: {reason}")
     if len(profiles) > limit:
         lines.append(f"... 还有 {len(profiles) - limit} 条")
     return "\n".join(lines)

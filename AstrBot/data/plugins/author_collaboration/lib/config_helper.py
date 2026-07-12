@@ -42,6 +42,11 @@ _DEFAULTS: dict[str, Any] = {
     "max_text_len": 1800,
     "meme_api_base": "http://meme-generator:2233",
     "meme_enabled": True,
+    # Template keys to suppress from the meme-generator service.
+    # Add the meme's template key (e.g. "my_template_key") to hide it from
+    # keyword lookup and the /memes listing.  Find keys with:
+    #   docker compose exec meme-generator curl -s http://localhost:2233/memes/keys
+    "meme_blocked_keys": [],
 }
 
 

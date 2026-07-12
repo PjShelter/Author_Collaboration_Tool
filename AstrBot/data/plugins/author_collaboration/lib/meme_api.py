@@ -49,9 +49,18 @@ def suffix_from_content_type(content_type: str) -> str:
 
 
 class MemeGeneratorClient:
-    def __init__(self, base_url: str = DEFAULT_BASE_URL, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        base_url: str = DEFAULT_BASE_URL,
+        timeout: float = 60.0,
+        blocked_keys: frozenset[str] | set[str] | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        # Template keys to suppress entirely (excluded from cache + listings).
+        self.blocked_keys: frozenset[str] = (
+            frozenset(blocked_keys) if blocked_keys else frozenset()
+        )
         # Cache: {key: info_dict} and {keyword_or_shortcut: key}
         self._templates: dict[str, dict[str, Any]] = {}
         self._keyword_index: dict[str, str] = {}
@@ -94,12 +103,15 @@ class MemeGeneratorClient:
             r.raise_for_status()
             keys = r.json()
 
-        # Step 2: fetch /memes/{key}/info concurrently with bounded pool
+        # Step 2: fetch /memes/{key}/info concurrently with bounded pool;
+        # skip any key that is on the blocked list.
         sem = asyncio.Semaphore(20)
         templates: dict[str, dict[str, Any]] = {}
 
         async with httpx.AsyncClient(timeout=10.0) as c:
             async def fetch_one(k: str) -> None:
+                if k in self.blocked_keys:
+                    return
                 async with sem:
                     try:
                         rr = await c.get(f"{self.base_url}/memes/{k}/info")

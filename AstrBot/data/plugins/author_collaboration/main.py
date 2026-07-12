@@ -164,8 +164,12 @@ class AuthorCollaborationPlugin(star.Star):
         )
         self.live2d = live2d_api.ShelterLive2DClient()
         self.meme_enabled = bool(self.cfg.get("meme_enabled", True))
+        self.meme_blocked_keys: frozenset[str] = frozenset(
+            str(k) for k in (self.cfg.get("meme_blocked_keys") or []) if str(k).strip()
+        )
         self.meme = meme_api.MemeGeneratorClient(
-            str(self.cfg.get("meme_api_base") or meme_api.DEFAULT_BASE_URL)
+            str(self.cfg.get("meme_api_base") or meme_api.DEFAULT_BASE_URL),
+            blocked_keys=self.meme_blocked_keys,
         )
         self.meme_aliases = dict(DEFAULT_MEME_ALIASES)
 
@@ -191,7 +195,6 @@ class AuthorCollaborationPlugin(star.Star):
     def _format_hit(self, match: risk_profiles.RiskMatch, user_id: int) -> str:
         return notify.join_lines(
             "风险档案命中,请管理员人工处理。",
-            f"user_id: {user_id}",
             f"person_id: {match.person_id}",
             f"昵称/标识: {match.display_name}",
             f"等级: {match.risk_level}",
@@ -228,9 +231,14 @@ class AuthorCollaborationPlugin(star.Star):
         Starts from the hardcoded DEFAULT_MEME_ALIASES (always available, even
         if meme-generator is down) and overlays the dynamic cache populated by
         meme_api.MemeGeneratorClient.find_by_keyword. Dynamic wins on collision.
+        Entries whose template key is in meme_blocked_keys are excluded.
         """
-        merged: dict[str, str] = dict(DEFAULT_MEME_ALIASES)
-        merged.update(self.meme._keyword_index)
+        merged: dict[str, str] = {
+            kw: key
+            for kw, key in DEFAULT_MEME_ALIASES.items()
+            if key not in self.meme_blocked_keys
+        }
+        merged.update(self.meme._keyword_index)  # blocked_keys already excluded by client
         return merged
 
     def _looks_like_known_command(self, text: str) -> bool:
@@ -761,7 +769,7 @@ class AuthorCollaborationPlugin(star.Star):
                         At(qq=user_id),
                         Plain(
                             "\n检测到该成员命中本群黑名单,已进入 60 秒处理流程。\n"
-                            f"记录对象: {match.display_name} / QQ: {user_id}\n"
+                            f"记录对象: {match.display_name}\n"
                             f"记录原因: {match.reason}\n"
                             "处理: 已加入本群黑名单,将于 1 分钟后踢出并拒绝再次申请。"
                         ),
@@ -814,7 +822,7 @@ class AuthorCollaborationPlugin(star.Star):
                         Plain("\n"),
                         At(qq=user_id),
                         Plain(
-                            f" {match.display_name} / QQ: {user_id}\n"
+                            f" {match.display_name}\n"
                             f"  记录原因: {match.reason}\n"
                             f"  处理结果: {status}"
                         ),
@@ -1189,10 +1197,16 @@ class AuthorCollaborationPlugin(star.Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 1)
     async def show_menu_on_private_or_mention(self, event: AstrMessageEvent):
-        """私聊或群里 @ 机器人但未输入已知指令时,展示指令列表。"""
-        if not (event.is_private_chat() or self._mentions_self(event)):
+        """只在 @ 机器人 或 / 开头指令 但未匹配到具体指令时展示菜单。
+
+        私聊里普通聊天不再自动弹菜单 — 用户跟 bot 聊時不需要被打扰。
+        只在用户主动用 / 开头询问帮助,或在群里 @ bot 时才回应菜单。
+        """
+        text = event.get_message_str().strip()
+        starts_with_slash = text.startswith("/")
+        if not (starts_with_slash or self._mentions_self(event)):
             return
-        if self._looks_like_known_command(event.get_message_str()):
+        if self._looks_like_known_command(text):
             return
         yield event.plain_result(self._command_menu_text()).stop_event()
 

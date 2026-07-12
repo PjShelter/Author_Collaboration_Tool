@@ -50,5 +50,11 @@
     "description": "meme-generator FastAPI 地址;Docker Compose 内使用 http://meme-generator:2233",
     "type": "string",
     "default": "http://meme-generator:2233"
+  },
+  "meme_blocked_keys": {
+    "description": "需要屏蔽的 meme 模板 key 列表(政治敏感等);填模板 key 而非关键词,用 /memes 或 curl http://meme-generator:2233/memes/keys 查询",
+    "type": "list",
+    "items": {"type": "string"},
+    "default": []
   }
 }
